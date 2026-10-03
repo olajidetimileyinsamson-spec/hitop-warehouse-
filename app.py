@@ -51,7 +51,7 @@ body{{font-family:Arial;margin:0;padding-bottom:120px;background:#f5f5f5}}
 <div class="header">
   <img src="/logo.png" onerror="this.style.display='none'; document.getElementById('fb').style.display='block'">
   <div id="fb" class="logo-text" style="display:none">HITOP</div>
-  <div><b>Hitop Warehouse - ACO Branch</b><small>Surulere / Aco, Abuja</small></div>
+  <div><b>Hitop Warehouse - ACO Branch</b><small> Aco/Amac Estate, Abuja</small></div>
 </div>
 <div class="titech-badge">Built by <b>{MY_NAME}</b> | <a class="blue" href="{MY_AI_LINK}" target="_blank">🤖 {MY_AI_LINK}</a> | <a class="green" href="https://wa.me/{MY_WHATSAPP}" target="_blank">💬 WhatsApp: {MY_WHATSAPP_DISPLAY}</a></div>
 """
@@ -115,16 +115,34 @@ def checkout():
 
 @app.route("/receipt/<code>")
 def receipt(code):
-    con=sqlite3.connect(DB); c=con.cursor(); c.execute("SELECT * FROM carts WHERE code=?",(code,)); cart=c.fetchone(); c.execute("SELECT * FROM cart_items WHERE cart_code=?",(code,)); items=c.fetchall(); con.close()
-    if not cart: return "Not found"
-    rows="".join([f"<tr><td>{i[2]}</td><td>{i[4]}</td><td>₦{i[3]}</td><td>₦{i[3]*i[4]}</td></tr>" for i in items])
-    return f"""<html><head><meta name="viewport" content="width=device-width"><style>body{{font-family:Arial;padding:15px;font-size:19px}} table{{width:100%;border-collapse:collapse}} td,th{{border:1px solid #ccc;padding:10px}}.btn{{padding:12px;margin:5px;border:none;border-radius:8px;color:white;font-weight:bold}} @media print{{.no-print{{display:none}}}}</style></head>
-    <body><div style="display:flex;align-items:center;gap:10px"><img src="/logo.png" style="height:60px" onerror="this.style.display='none'"><h2>Hitop Warehouse Receipt</h2></div>
-    <p><b>Code:</b> {cart[0]}<br><b>Email:</b> {cart[5]}<br><b>Time:</b> {cart[3]}<br><b>Status:</b> {cart[1]}</p>
-    <table><tr><th>Product</th><th>Qty</th><th>Price</th><th>Sub</th></tr>{rows}</table><h3>Total: ₦{cart[2]}</h3>
-    <div class="no-print"><button class="btn" style="background:#222" onclick="window.print()">🖨️ Print</button>
-    <a href="/receipt/{code}/pdf"><button class="btn" style="background:#c40000">📄 Download PDF</button></a>
-    <button class="btn" style="background:#25D366" onclick="if(navigator.share){{navigator.share({{title:'Hitop {code}', url:location.href}})}}">📤 Share</button><br><br><a href="/">Shop</a> | <a href="/profile">Profile</a> | <a href="/staff/dash">Staff</a></div></body></html>"""
+    con=sqlite3.connect(DB); c=con.cursor()
+    c.execute("SELECT * FROM carts WHERE id=?", (code,))
+    cart=c.fetchone()
+    if not cart:
+        con.close()
+        return "Not found <a href='/'>Shop</a>"
+    c.execute("SELECT * FROM cart_items WHERE cart_id=?", (code,))
+    items=c.fetchall()
+    con.close()
+
+    status = cart[4] if len(cart) > 4 else "Submitted"
+    is_paid = "PAID" in str(status).upper()
+    rows="".join([f"<tr><td>{i[1]}</td><td>{i[2]}</td><td>₦{i[3]}</td><td>₦{i[4]}</td></tr>" for i in items])
+
+    return f"""<html><head><meta name="viewport" content="width=device-width">
+    <style>.btn{{padding:10px;border:0;border-radius:8px;color:#fff}}</style></head>
+    <body><div style="display:flex;align-items:center;gap:10px"><img src="/logo.png" style="height:45px">
+    <h2>HITOP Warehouse</h2></div>
+    <p><b>Code:</b> {cart[0]}<br><b>Email:</b> {cart[1]}<br>
+    <b>Status:</b> <span style="color:{'green' if is_paid else 'orange'};font-weight:bold">{'PAID ✅' if is_paid else 'PENDING ⏳ - Await Staff'}</span></p>
+    {'<div style="background:#fff3cd;padding:10px;border-radius:8px;border:1px solid orange">Awaiting staff confirmation. Print/PDF go show after staff confirm payment.</div>' if not is_paid else ''}
+    <table border=1 cellpadding=8 style="width:100%;border-collapse:collapse;margin-top:10px"><tr><th>Product</th><th>Qty</th><th>Price</th><th>Sub</th></tr>{rows}</table>
+    <h3>Total: ₦{cart[2]}</h3>
+    {'<div class="no-print"><button class="btn" onclick="window.print()" style="background:#111">🖨️ Print</button> <a href="/receipt/{code}/pdf"><button class="btn" style="background:#c40000">📄 PDF</button></a> <a href="https://wa.me/?text=My HITOP Receipt '+code+'"><button class="btn" style="background:#25D366">Share</button></a></div>' if is_paid else '<small>Print/PDF locked until PAID</small>'}
+    <br><br>
+    <a href="/">Shop</a> | <a href="/profile">Profile</a>
+    </div></body></html>
+    """
 
 @app.route("/receipt/<code>/pdf")
 def receipt_pdf(code):
@@ -178,11 +196,62 @@ def logout(): session.clear(); return redirect("/login")
 def staff_login():
     if request.method=="POST" and request.form['pin']=="1234": session['staff']="STAFF-001"; return redirect("/staff/dash")
     return BASE_HEAD+"<div class=card><h3>Staff Login</h3><form method=post><input name=pin type=password placeholder='PIN 1234' style='padding:12px'><button class=btn style=background:#222>Login</button></form></div>"
-
-@app.route("/staff/dash")
+    
+@app.route("/staff/dash", methods=["GET","POST"]) # <- Add methods
 def staff_dash():
-    con=sqlite3.connect(DB); c=con.cursor(); c.execute("SELECT * FROM carts ORDER BY time DESC"); orders=c.fetchall(); con.close()
-    html=BASE_HEAD+"<h3 style=padding:12px>Staff - Receipt Print & Share</h3>"
+    if not session.get('is_staff'):
+        return redirect('/staff/')
+    con=sqlite3.connect(DB); c=con.cursor()
+
+    # === 1. WALK-IN CODE - PASTE HERE ===
+    if request.method=="POST" and 'walkin_product' in request.form:
+        prod_id = request.form['walkin_product']
+        qty = int(request.form['walkin_qty'])
+        cust_email = request.form.get('walkin_email') or "walkin@hitop.com"
+        c.execute("SELECT * FROM products WHERE id=?", (prod_id,))
+        p = c.fetchone()
+        if p and p[3] >= qty:
+            import datetime
+            cart_id = f"HITOP-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}-WALKIN"
+            total = p[2] * qty
+            c.execute("INSERT INTO carts VALUES (?,?,?,?,?)",
+                      (cart_id, cust_email, total, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "PAID"))
+            c.execute("INSERT INTO cart_items (cart_id,product,qty,price,subtotal) VALUES (?,?,?,?,?)",
+                      (cart_id, p[1], qty, p[2], total))
+            c.execute("UPDATE products SET stock=stock-? WHERE id=?", (qty, prod_id))
+            con.commit()
+
+    if request.method=="POST" and 'sync_id' in request.form:
+        c.execute("UPDATE carts SET status='PAID' WHERE id=?", (request.form['sync_id'],))
+        con.commit()
+
+    c.execute("SELECT * FROM products"); prods=c.fetchall()
+    c.execute("SELECT * FROM carts ORDER BY time DESC"); orders=c.fetchall()
+    # === END ===
+
+        html=BASE_HEAD+"<h3 style=padding:12px>Staff Dashboard</h3>"
+
+    # === WALK-IN FORM ===
+    html+=f"""
+    <div class="card" style="border:3px solid #111;padding:15px;margin:15px 0;background:#fff">
+    <h3>➕ Add Walk-In Sale</h3>
+    <form method=post>
+    <select name=walkin_product required style="width:100%;padding:12px;margin:5px 0">
+    <option value="">-- Select Product --</option>
+    """
+    for p in prods:
+        html+=f'<option value="{p[0]}">{p[1]} - ₦{p[2]} (Stock:{p[3]})</option>'
+    html+="""
+    </select>
+    <div style="display:flex;gap:5px">
+    <input name=walkin_qty type=number min=1 placeholder="Qty" required style="width:48%;padding:12px">
+    <input name=walkin_email placeholder="Phone (optional)" style="width:48%;padding:12px">
+    </div>
+    <button style="background:#111;color:#fff;width:100%;padding:12px;margin-top:5px;border-radius:8px">💰 Add Sale</button>
+    </form></div>
+    <h3>Recent Orders</h3>
+    """
+
     for o in orders:
         html+=f"<div class=card><b>{o[0]}</b><br>{o[5]} - ₦{o[2]} - {o[1]}<br><br><a href='/receipt/{o[0]}'><button class=btn style=background:#222>🖨️ View/Print</button></a> <a href='/receipt/{o[0]}/pdf'><button class=btn style=background:#c40000>📄 PDF Share</button></a> <a href='/staff/sync/{o[0]}'><button class=btn style=background:green>Sync Paid</button></a></div>"
     html+=f"<div style=padding:12px><a href='/md/'><button class=btn style=background:#111>MD Page - Low Stock Alert</button></a></div>"

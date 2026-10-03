@@ -191,13 +191,65 @@ def staff_dash():
 @app.route("/md/", methods=["GET","POST"])
 def md_page():
     con=sqlite3.connect(DB); c=con.cursor()
-    if request.method=="POST": c.execute("UPDATE products SET stock=stock+? WHERE id=?",(int(request.form['add']), request.form['id'])); con.commit()
-    c.execute("SELECT * FROM products"); prods=c.fetchall(); con.close()
-    html=BASE_HEAD+"<h3 style=padding:12px>MD Page - Low Stock Alert</h3>"
-    for p in prods:
-        alert = f'<div class="low">⚠️ LOW STOCK! Only {p[3]} left</div>' if p[3]<10 else f'<div class="ok">Stock OK: {p[3]}</div>'
-        html+=f"<div class=card><b style='font-size:24px'>{p[1]}</b> ({p[4]})<br>₦{p[2]}<br>{alert}<form method=post style=margin-top:10px><input type=hidden name=id value={p[0]}><input type=number name=add placeholder='Add qty' style=padding:10px;width:110px><button class=btn style=background:#c40000>Add Stock</button></form></div>"
-    return html
+    if request.method=="POST" and 'add' in request.form:
+        try: c.execute("UPDATE products SET stock=stock+? WHERE id=?",(int(request.form['add']), request.form['id'])); con.commit()
+        except: pass
+    if request.method=="POST" and 'new_name' in request.form:
+        c.execute("INSERT INTO products (name,price,stock,category) VALUES (?,?,?,?)",(request.form['new_name'], int(request.form['new_price']), int(request.form['new_stock']), request.form['new_cat'])); con.commit()
+    c.execute("SELECT * FROM products"); prods=c.fetchall()
+    total_stock_value = sum([p[2]*p[3] for p in prods])
+    low_count = len([p for p in prods if p[3] < 10])
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    date_filter = request.args.get("date", today_str)
+    c.execute("SELECT COUNT(*), COALESCE(SUM(total),0) FROM carts WHERE date(time)=?",(date_filter,))
+    daily_count, daily_total = c.fetchone()
+    c.execute("SELECT * FROM carts WHERE date(time)=? ORDER BY time DESC",(date_filter,)); daily_orders=c.fetchall()
+    c.execute("SELECT product, SUM(qty) as sq FROM cart_items GROUP BY product ORDER BY sq DESC LIMIT 1"); best=c.fetchone()
+    best_text = f"{best[0]} ({best[1]} sold)" if best else "No sales yet"
+    c.execute("SELECT * FROM carts ORDER BY time DESC LIMIT 50"); all_orders=c.fetchall(); con.close()
+    tab=request.args.get("tab","low")
+    html=BASE_HEAD+f"""
+    <div style="padding:14px"><h2>MD Dashboard</h2><small>Today: {today_str} | Viewing: {date_filter}</small>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0">
+    <div class="card" style="margin:0;border-left:5px solid green"><small>Today Sales</small><br><b style="font-size:24px">₦{daily_total}</b><br><small>{daily_count} receipts</small></div>
+    <div class="card" style="margin:0;border-left:5px solid #c40000"><small>Stock Value</small><br><b style="font-size:24px">₦{total_stock_value}</b></div>
+    <div class="card" style="margin:0;border-left:5px solid orange"><small>Low Stock</small><br><b style="font-size:24px">{low_count}</b></div>
+    <div class="card" style="margin:0;border-left:5px solid blue"><small>Best</small><br><b style="font-size:13px">{best_text}</b></div></div>
+    <div style="display:flex;gap:8px;overflow:auto">
+    <a href="/md/?tab=low"><button class="btn" style="background:#111">Low Stock</button></a>
+    <a href="/md/?tab=daily&date={date_filter}"><button class="btn" style="background:#111">Daily Sales 📄</button></a>
+    <a href="/md/?tab=all"><button class="btn" style="background:#111">All Products</button></a>
+    <a href="/md/?tab=manage"><button class="btn" style="background:#111">Add Product</button></a></div>"""
+    if tab=='daily':
+        html+=f"""<div class="card"><form method=get style="display:flex;gap:8px"><input type=hidden name=tab value=daily>
+        <input type=date name=date value="{date_filter}" style="padding:12px;flex:1"><button class="btn" style="background:#111">View</button></form>
+        <h3>Sales {date_filter}</h3><b>Total: ₦{daily_total} - {daily_count} orders</b><br><br>
+        <a href="/md/daily/pdf?date={date_filter}"><button class="btn" style="background:#c40000;width:100%">📄 Download Daily PDF</button></a></div>"""
+        for o in daily_orders: html+=f"<div class=card><b>{o[0]}</b><br>{o[5]} - ₦{o[2]} - {o[1]}<br><small>{o[3]}</small></div>"
+    elif tab=='manage':
+        html+="""<div class="card"><h3>Add New Product</h3><form method=post><input name=new_name placeholder="Product Name" required style="width:100%;padding:12px;margin:5px 0">
+        <input name=new_price type=number placeholder="Price" required style="width:48%;padding:12px"><input name=new_stock type=number placeholder="Stock" required style="width:48%;padding:12px">
+        <input name=new_cat placeholder="Category" required style="width:100%;padding:12px;margin:5px 0"><button class="btn" style="background:#c40000;width:100%">Add</button></form></div>"""
+    else:
+        for p in ([x for x in prods if x[3]<10] if tab=='low' else prods):
+            alert = f'<div class="low">⚠️ LOW STOCK! Only {p[3]} left</div>' if p[3]<10 else f'<div class="ok">Stock OK: {p[3]}</div>'
+            html+=f"<div class=card><b style='font-size:24px'>{p[1]}</b> ({p[4]})<br>₦{p[2]}<br>{alert}<form method=post style=margin-top:10px><input type=hidden name=id value={p[0]}><input type=number name=add placeholder='Add qty' style=padding:10px;width:110px><button class=btn style=background:#c40000>Add Stock</button></form></div>"
+    html+="</div><div class=nav><a href='/'>Shop</a><a href='/staff/dash'>Staff</a><a href='/md/?tab=daily'>Daily</a></div>"; return html
+
+@app.route("/md/daily/pdf")
+def md_daily_pdf():
+    date_filter=request.args.get("date", datetime.datetime.now().strftime("%Y-%m-%d"))
+    con=sqlite3.connect(DB); c=con.cursor(); c.execute("SELECT * FROM carts WHERE date(time)=? ORDER BY time DESC",(date_filter,)); orders=c.fetchall(); con.close()
+    total=sum([o[2] for o in orders])
+    try:
+        from reportlab.pdfgen import canvas; from reportlab.lib.pagesizes import A4; buf=io.BytesIO(); p=canvas.Canvas(buf, pagesize=A4)
+        p.setFont("Helvetica-Bold",18); p.drawString(50,800,f"Hitop Daily Sales - {date_filter}"); p.setFont("Helvetica",12)
+        p.drawString(50,780,f"Total: N{total} - Orders: {len(orders)} - Built by Titech {MY_AI_LINK}")
+        y=750
+        for o in orders: p.drawString(50,y,f"{o[3]} | {o[0]} | {o[5]} | N{o[2]}"); y-=18;
+        p.drawString(50,y-20,f"GRAND TOTAL: N{total}"); p.showPage(); p.save(); buf.seek(0)
+        r=make_response(buf.getvalue()); r.headers['Content-Type']='application/pdf'; r.headers['Content-Disposition']=f'attachment; filename=Daily-{date_filter}.pdf'; return r
+    except Exception as e: return f"Need reportlab - pip install reportlab<br>{e}"
 
 @app.route("/staff/sync/<code>")
 def sync(code):

@@ -229,7 +229,7 @@ def staff_dash():
     c.execute("SELECT * FROM carts ORDER BY time DESC"); orders=c.fetchall()
     # === END ===
 
-        html=BASE_HEAD+"<h3 style=padding:12px>Staff Dashboard</h3>"
+    html=BASE_HEAD+"<h3 style=padding:12px>Staff Dashboard</h3>"
 
     # === WALK-IN FORM ===
     html+=f"""

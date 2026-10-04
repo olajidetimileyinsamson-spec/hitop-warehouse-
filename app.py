@@ -55,7 +55,9 @@ body{{font-family:Arial;margin:0;padding-bottom:120px;background:#f5f5f5}}
 </div>
 <div class="titech-badge">Built by <b>{MY_NAME}</b> | <a class="blue" href="{MY_AI_LINK}" target="_blank">🤖 {MY_AI_LINK}</a> | <a class="green" href="https://wa.me/{MY_WHATSAPP}" target="_blank">💬 WhatsApp: {MY_WHATSAPP_DISPLAY}</a></div>
 """
-
+@app.route('/ping')
+def ping():
+    return "Hitop Alive - Aco Branch OK", 200
 @app.route("/")
 def shop():
     if not session.get('email'): return redirect("/login")
@@ -192,10 +194,22 @@ def about(): return redirect("/profile")
 @app.route("/logout")
 def logout(): session.clear(); return redirect("/login")
 
-@app.route("/staff/", methods=["GET","POST"])
+@app.route('/staff/', methods=['GET','POST'])
+@app.route('/staff/login', methods=['GET','POST'])
 def staff_login():
-    if request.method=="POST" and request.form['pin']=="1234": session['staff']="STAFF-001"; return redirect("/staff/dash")
-    return BASE_HEAD+"<div class=card><h3>Staff Login</h3><form method=post><input name=pin type=password placeholder='PIN 1234' style='padding:12px'><button class=btn style=background:#222>Login</button></form></div>"
+    if request.method=='POST':
+        pin=request.form.get('pin','').strip()
+        if pin=='1234':
+            session['is_staff']=True  # MUST be is_staff to match line 202
+            return redirect('/staff/dash')
+    return BASE_HEAD+"""
+    <div class="card" style="padding:20px;margin:20px;background:#fff">
+    <h3>Staff Login</h3>
+    <form method=post style="display:flex;gap:5px">
+    <input name=pin type=password placeholder="PIN 1234" required style="flex:1;padding:12px;border:1px solid #ccc;border-radius:8px">
+    <button style="background:#111;color:#fff;padding:12px 20px;border-radius:8px">Login</button>
+    </form></div>
+    """
     
 @app.route("/staff/dash", methods=["GET","POST"]) # <- Add methods
 def staff_dash():
